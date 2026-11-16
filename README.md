@@ -12,7 +12,9 @@
 - Smoke test: customer ID `test1` -> "Generate demo customer data" -> ask about returns, then about "my order"
 
 ## 3. Deploy the site (Cloudflare Pages)
-- Edit `SUPPORT_URL` in `site/chat.js` to your Streamlit URL (keep `?embed=true`)
+- Edit `SUPPORT_URL` in `site/chat.js` to your Streamlit URL (keep `?embed=true`).
+  Until then the chat shows "not set up yet"; never leave a placeholder URL, since anyone can claim it.
+  When the site is opened from localhost it uses the local agent at `http://localhost:8501` automatically.
 - Pages -> connect repo, build command none, output directory `site`
 
 ## Local run
