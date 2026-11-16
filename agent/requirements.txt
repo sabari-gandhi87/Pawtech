@@ -1,5 +1,5 @@
 streamlit>=1.40
 openai>=1.50
-mem0ai>=0.1.100
+mem0ai>=2.2,<3  # app uses the 2.x filters= API for search/get_all
 qdrant-client>=1.9
 google-genai>=1.0
