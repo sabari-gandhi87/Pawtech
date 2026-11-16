@@ -58,9 +58,16 @@ def get_clients():
 
 
 def seed_kb(memory: Memory):
-    """One-off: store product knowledge verbatim (infer=False skips LLM fact extraction)."""
+    """Store product knowledge verbatim (infer=False skips LLM fact extraction).
+    Idempotent: entries already present are skipped, so repeated clicks don't create duplicates.
+    Returns the number of entries added."""
+    existing = set(_texts(memory.get_all(user_id=KB_USER)))
+    added = 0
     for doc in KB:
-        memory.add(doc, user_id=KB_USER, infer=False, metadata={"role": "kb"})
+        if doc not in existing:
+            memory.add(doc, user_id=KB_USER, infer=False, metadata={"role": "kb"})
+            added += 1
+    return added
 
 
 def _texts(res):
@@ -87,16 +94,21 @@ class SupportAgent:
                 + [{"role": "user", "content": query}],
             )
             answer = resp.choices[0].message.content
+        except Exception as e:
+            st.error(f"Error: {e}")
+            return "Sorry, something went wrong. Please try again."
+        if not answer:  # e.g. response blocked by a safety filter; never put None into chat history
+            return "Sorry, I couldn't answer that. Could you rephrase, or ask to talk to a human?"
+        try:
             # Store the exchange as one conversation so Mem0 extracts facts (dog name, owned products, issues)
             self.memory.add(
                 [{"role": "user", "content": query}, {"role": "assistant", "content": answer}],
                 user_id=user_id,
                 metadata={"app_id": "pawtech-support"},
             )
-            return answer
-        except Exception as e:
-            st.error(f"Error: {e}")
-            return "Sorry, something went wrong. Please try again."
+        except Exception as e:  # don't throw away a good answer just because saving memory failed
+            st.warning(f"Couldn't save this conversation to memory: {e}")
+        return answer
 
     def get_memories(self, user_id):
         return self.memory.get_all(user_id=user_id)
@@ -132,7 +144,10 @@ memory, llm = get_clients()
 agent = SupportAgent(memory, llm)
 
 # ---- Sidebar ----
-customer_id = st.sidebar.text_input("Customer ID", placeholder="e.g. aoife-123")
+customer_id = st.sidebar.text_input("Customer ID", placeholder="e.g. aoife-123").strip()
+if customer_id.lower() == KB_USER:  # reserved: would read/write the shared product knowledge base
+    st.sidebar.error("That ID is reserved. Please choose another.")
+    customer_id = ""
 if customer_id != st.session_state.get("previous_customer_id"):
     st.session_state.messages = []
     st.session_state.customer_data = None
@@ -157,8 +172,8 @@ if st.sidebar.button("View memory"):
 
 with st.sidebar.expander("Admin"):
     if st.button("Seed product knowledge (run once)"):
-        seed_kb(memory)
-        st.success(f"Seeded {len(KB)} entries.")
+        added = seed_kb(memory)
+        st.success(f"Added {added} new entries ({len(KB) - added} already present).")
 
 # ---- Chat ----
 for m in st.session_state.messages:
