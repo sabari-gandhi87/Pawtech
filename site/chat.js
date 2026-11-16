@@ -1,7 +1,6 @@
-// Your deployed Streamlit app, e.g. "https://pawtech-support.streamlit.app/?embed=true".
-// Leave it empty until you have deployed. NEVER leave a placeholder like "YOUR-APP.streamlit.app":
+// Your deployed Streamlit app (keep "?embed=true"). Set it to "" to turn the chat off. NEVER leave a placeholder like "YOUR-APP.streamlit.app":
 // anyone can register that name on Streamlit Cloud and their app would then appear in your chat panel.
-const SUPPORT_URL = "";
+const SUPPORT_URL = "https://pawtech-support-sg-learning.streamlit.app/?embed=true";
 // Used automatically when the site itself is opened from this computer (local testing).
 const LOCAL_SUPPORT_URL = "http://localhost:8501/?embed=true";
 
