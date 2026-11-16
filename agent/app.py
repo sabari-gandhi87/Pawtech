@@ -4,7 +4,7 @@ from datetime import datetime, timedelta
 
 import streamlit as st
 from mem0 import Memory
-from openai import OpenAI
+from openai import APIConnectionError, APITimeoutError, InternalServerError, OpenAI, RateLimitError
 
 from kb import KB
 
@@ -16,7 +16,10 @@ st.caption("Chat with our AI assistant. It remembers you and your dog between vi
 GEMINI_API_KEY = st.secrets["GEMINI_API_KEY"]
 QDRANT_URL = st.secrets["QDRANT_URL"]
 QDRANT_API_KEY = st.secrets["QDRANT_API_KEY"]
-CHAT_MODEL = st.secrets.get("CHAT_MODEL", "gemini-2.5-flash")
+# gemini-2.5-flash is closed to new API keys; check Google AI Studio if this one is retired too.
+CHAT_MODEL = st.secrets.get("CHAT_MODEL", "gemini-3.5-flash-lite")
+# Used automatically when CHAT_MODEL is overloaded (503), rate-limited (429) or times out.
+FALLBACK_MODEL = st.secrets.get("FALLBACK_MODEL", "gemini-3.1-flash-lite")
 # Verify the embedding model name in Google AI Studio; change it here if it has been retired.
 EMBED_MODEL = st.secrets.get("EMBED_MODEL", "models/gemini-embedding-001")
 EMBED_DIMS = 768  # must match the Qdrant collection; delete the collection if you change it
@@ -53,15 +56,32 @@ def get_clients():
     llm = OpenAI(
         api_key=GEMINI_API_KEY,
         base_url="https://generativelanguage.googleapis.com/v1beta/openai/",
+        timeout=30,  # fail fast instead of hanging if Gemini is overloaded; chat() then tries the fallback
+        max_retries=1,
     )
     return memory, llm
+
+
+# Errors that mean "this model is busy right now", worth retrying on another model.
+_BUSY_ERRORS = (InternalServerError, RateLimitError, APITimeoutError, APIConnectionError)
+
+
+def chat(llm: OpenAI, **kwargs):
+    """chat.completions.create with CHAT_MODEL, switching to FALLBACK_MODEL if it is busy."""
+    models = [CHAT_MODEL] + ([FALLBACK_MODEL] if FALLBACK_MODEL and FALLBACK_MODEL != CHAT_MODEL else [])
+    for i, model in enumerate(models):
+        try:
+            return llm.chat.completions.create(model=model, **kwargs)
+        except _BUSY_ERRORS:
+            if i == len(models) - 1:
+                raise
 
 
 def seed_kb(memory: Memory):
     """Store product knowledge verbatim (infer=False skips LLM fact extraction).
     Idempotent: entries already present are skipped, so repeated clicks don't create duplicates.
     Returns the number of entries added."""
-    existing = set(_texts(memory.get_all(user_id=KB_USER)))
+    existing = set(_texts(memory.get_all(filters={"user_id": KB_USER}, top_k=100)))
     added = 0
     for doc in KB:
         if doc not in existing:
@@ -80,15 +100,15 @@ class SupportAgent:
 
     def handle_query(self, query, user_id):
         try:
-            kb = _texts(self.memory.search(query=query, user_id=KB_USER, limit=4))
-            mine = _texts(self.memory.search(query=query, user_id=user_id, limit=5))
+            kb = _texts(self.memory.search(query, filters={"user_id": KB_USER}, top_k=4))
+            mine = _texts(self.memory.search(query, filters={"user_id": user_id}, top_k=5))
             context = (
                 "Product knowledge:\n" + "\n".join(f"- {t}" for t in kb)
                 + "\n\nCustomer memory:\n" + ("\n".join(f"- {t}" for t in mine) or "- (nothing yet)")
             )
             history = st.session_state.messages[-6:]  # short-term context from this session
-            resp = self.llm.chat.completions.create(
-                model=CHAT_MODEL,
+            resp = chat(
+                self.llm,
                 messages=[{"role": "system", "content": SYSTEM_PROMPT + "\n\n" + context}]
                 + history
                 + [{"role": "user", "content": query}],
@@ -111,7 +131,7 @@ class SupportAgent:
         return answer
 
     def get_memories(self, user_id):
-        return self.memory.get_all(user_id=user_id)
+        return self.memory.get_all(filters={"user_id": user_id}, top_k=100)
 
     def generate_synthetic_data(self, user_id):
         today = datetime.now()
@@ -122,8 +142,8 @@ name, dog (name, breed, age), recent_order (product from WoofLingo Buds / Stroll
 delivery by {delivery}, order number, price), previous_orders (2 items), support_history (2 short past tickets),
 preferences (list). Valid JSON only."""
         try:
-            resp = self.llm.chat.completions.create(
-                model=CHAT_MODEL,
+            resp = chat(
+                self.llm,
                 messages=[{"role": "user", "content": prompt}],
                 response_format={"type": "json_object"},
             )
@@ -147,6 +167,9 @@ agent = SupportAgent(memory, llm)
 customer_id = st.sidebar.text_input("Customer ID", placeholder="e.g. aoife-123").strip()
 if customer_id.lower() == KB_USER:  # reserved: would read/write the shared product knowledge base
     st.sidebar.error("That ID is reserved. Please choose another.")
+    customer_id = ""
+elif any(c.isspace() for c in customer_id):  # mem0 rejects IDs containing spaces
+    st.sidebar.error("Customer IDs can't contain spaces. Try e.g. aoife-123.")
     customer_id = ""
 if customer_id != st.session_state.get("previous_customer_id"):
     st.session_state.messages = []
