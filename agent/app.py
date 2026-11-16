@@ -1,6 +1,11 @@
 import json
+import os
 import re
 from datetime import datetime, timedelta
+
+# Turn off mem0's anonymous usage tracking (PostHog). mem0 reads this environment variable once,
+# when it is imported, so it must be set before the "from mem0 import Memory" line below.
+os.environ["MEM0_TELEMETRY"] = "False"
 
 import streamlit as st
 from mem0 import Memory
@@ -30,6 +35,14 @@ for dog owners: WoofLingo Buds, StrollBot and PupSitter.
 Answer using the 'Product knowledge' and 'Customer memory' provided. If the answer is not there, say you are not
 sure and offer to pass the customer to a human. Never invent prices, policies or specs. Be warm, brief, and use
 the dog's name when you know it."""
+
+# Catalogue prices (must match kb.py) so generated demo orders don't invent prices or currencies.
+PRICES = {
+    "WoofLingo Buds": "199 EUR",
+    "StrollBot": "1,499 EUR (or 59 EUR/month subscription)",
+    "PupSitter": "349 EUR",
+    "StrollBot bag cartridges (60 bags)": "12 EUR",
+}
 
 
 @st.cache_resource(show_spinner="Starting up...")
@@ -90,6 +103,12 @@ def seed_kb(memory: Memory):
     return added
 
 
+def _today_note():
+    """The model doesn't know today's date; without it, it treats future delivery dates as past."""
+    return (f"Today's date is {datetime.now():%A, %B %d, %Y}. Compare any dates in the customer memory with "
+            "today: a delivery date after today means the order has NOT arrived yet (it is on its way).")
+
+
 def _texts(res):
     return [m["memory"] for m in (res or {}).get("results", []) if "memory" in m]
 
@@ -109,7 +128,7 @@ class SupportAgent:
             history = st.session_state.messages[-6:]  # short-term context from this session
             resp = chat(
                 self.llm,
-                messages=[{"role": "system", "content": SYSTEM_PROMPT + "\n\n" + context}]
+                messages=[{"role": "system", "content": SYSTEM_PROMPT + "\n\n" + _today_note() + "\n\n" + context}]
                 + history
                 + [{"role": "user", "content": query}],
             )
@@ -137,10 +156,15 @@ class SupportAgent:
         today = datetime.now()
         order_date = (today - timedelta(days=10)).strftime("%B %d, %Y")
         delivery = (today + timedelta(days=2)).strftime("%B %d, %Y")
+        price_list = "\n".join(f"- {p}: {price}" for p, price in PRICES.items())
         prompt = f"""Create a customer profile for PawTech customer {user_id}. Return a JSON object with keys:
-name, dog (name, breed, age), recent_order (product from WoofLingo Buds / StrollBot / PupSitter, placed {order_date},
-delivery by {delivery}, order number, price), previous_orders (2 items), support_history (2 short past tickets),
-preferences (list). Valid JSON only."""
+name, dog (name, breed, age), recent_order (product from WoofLingo Buds / StrollBot / PupSitter, order_date
+{order_date}, status "in transit", expected_delivery_date {delivery}, order_number, price),
+previous_orders (2 items, each delivered before {order_date}), support_history (2 short past tickets),
+preferences (list).
+Use ONLY these catalogue prices, in EUR, exactly as written:
+{price_list}
+Valid JSON only."""
         try:
             resp = chat(
                 self.llm,
