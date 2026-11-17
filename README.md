@@ -12,6 +12,9 @@
   enter `ADMIN_PASSWORD` in the sidebar, then Admin -> "Seed product knowledge" ONCE
 - Smoke test (admin): customer ID `test1` -> "Generate demo customer data" -> ask about returns, then about "my order"
 - Visitors get an anonymous ID automatically: `site/chat.js` stores a random ID in the browser and passes it as `?cid=`
+- On a visitor's first message, the agent creates a demo customer profile (dog, an order in transit, past tickets)
+  for their ID, so "Where is my order?" works straight away. The chat shows "You're chatting as demo customer …".
+  Costs one extra Gemini call per new visitor; the same browser keeps its profile on later visits.
 
 ## 3. Deploy the site (Cloudflare Pages)
 - Edit `SUPPORT_URL` in `site/chat.js` to your Streamlit URL (keep `?embed=true`).

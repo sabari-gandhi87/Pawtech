@@ -115,6 +115,41 @@ def _texts(res):
     return [m["memory"] for m in (res or {}).get("results", []) if "memory" in m]
 
 
+_PROFILE_KEYS = ("name", "dog", "recent_order")
+
+
+def _profile_summary(data):
+    """The parts of a demo profile shown in the 'chatting as' line, or None if there is no profile."""
+    profile = {k: data[k] for k in _PROFILE_KEYS if isinstance(data, dict) and data.get(k)}
+    return profile or None
+
+
+def _profile_from_memories(res):
+    """Rebuild the demo profile summary from a customer's stored notes. Demo profiles are stored as
+    'key: <json>' notes (see generate_synthetic_data); notes learned from chats are plain sentences."""
+    data = {}
+    for text in _texts(res):
+        key, sep, value = text.partition(": ")
+        if sep and key in _PROFILE_KEYS:
+            try:
+                data[key] = json.loads(value)
+            except ValueError:
+                pass
+    return _profile_summary(data)
+
+
+def _profile_line(profile):
+    """e.g. 'You're chatting as demo customer **Aoife**, owner of **Biscuit**. Latest order: **StrollBot** (in transit).'"""
+    name, dog, order = profile.get("name"), profile.get("dog"), profile.get("recent_order")
+    line = f"🐶 You're chatting as demo customer **{name if isinstance(name, str) else 'Guest'}**"
+    if isinstance(dog, dict) and dog.get("name"):
+        line += f", owner of **{dog['name']}**"
+    line += "."
+    if isinstance(order, dict) and order.get("product"):
+        line += f" Latest order: **{order['product']}**" + (f" ({order['status']})." if order.get("status") else ".")
+    return line + " Try asking: *Where is my order?*"
+
+
 class SupportAgent:
     def __init__(self, memory, llm):
         self.memory, self.llm = memory, llm
@@ -154,7 +189,7 @@ class SupportAgent:
     def get_memories(self, user_id):
         return self.memory.get_all(filters={"user_id": user_id}, top_k=100)
 
-    def generate_synthetic_data(self, user_id):
+    def generate_synthetic_data(self, user_id, show_errors=True):
         today = datetime.now()
         order_date = (today - timedelta(days=10)).strftime("%B %d, %Y")
         delivery = (today + timedelta(days=2)).strftime("%B %d, %Y")
@@ -182,7 +217,8 @@ Valid JSON only."""
                                     metadata={"role": "system"})
             return data
         except Exception as e:
-            st.error(f"Failed to generate synthetic data: {e}")
+            if show_errors:  # visitors just carry on without a profile
+                st.error(f"Failed to generate synthetic data: {e}")
             return None
 
 
@@ -227,12 +263,20 @@ if customer_id != st.session_state.get("previous_customer_id"):
     st.session_state.messages = []
     st.session_state.customer_data = None
     st.session_state.previous_customer_id = customer_id
+    # Look up this customer's demo profile once (no language model call, just the knowledge store).
+    try:
+        st.session_state.profile = _profile_from_memories(agent.get_memories(customer_id))
+    except Exception:
+        st.session_state.profile = None
+    st.session_state.profile_attempted = False
 st.session_state.setdefault("messages", [])
+profile_slot = st.empty()  # filled at the end, so a profile created during this run shows straight away
 
 if is_admin:
     if st.sidebar.button("Generate demo customer data"):
         with st.spinner("Generating..."):
             st.session_state.customer_data = agent.generate_synthetic_data(customer_id)
+        st.session_state.profile = _profile_summary(st.session_state.customer_data) or st.session_state.profile
     if st.session_state.get("customer_data"):
         st.sidebar.json(st.session_state.customer_data)
 
@@ -253,7 +297,18 @@ for m in st.session_state.messages:
 query = st.chat_input("How can I help with your PawTech gear?")
 if query:
     st.chat_message("user").markdown(query)
+    # Automatic demo profile: a visitor with no profile gets one on their first message, so questions like
+    # "where is my order?" work. Only for the visitor's own ID (admins looking up other IDs use the sidebar),
+    # and only one attempt per session so a failure doesn't add a slow call to every message.
+    if (not st.session_state.profile and customer_id == st.session_state.visitor_id
+            and not st.session_state.profile_attempted):
+        st.session_state.profile_attempted = True
+        with st.spinner("Setting up your demo customer account..."):
+            st.session_state.profile = _profile_summary(agent.generate_synthetic_data(customer_id, show_errors=is_admin))
     with st.spinner("Thinking..."):
         answer = agent.handle_query(query, customer_id)
     st.session_state.messages += [{"role": "user", "content": query}, {"role": "assistant", "content": answer}]
     st.chat_message("assistant").markdown(answer)
+
+if st.session_state.profile:
+    profile_slot.caption(_profile_line(st.session_state.profile))
