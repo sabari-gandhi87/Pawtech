@@ -303,7 +303,7 @@ if query:
     if (not st.session_state.profile and customer_id == st.session_state.visitor_id
             and not st.session_state.profile_attempted):
         st.session_state.profile_attempted = True
-        with st.spinner("Setting up your demo customer account..."):
+        with st.spinner("Looking up your details..."):
             st.session_state.profile = _profile_summary(agent.generate_synthetic_data(customer_id, show_errors=is_admin))
     with st.spinner("Thinking..."):
         answer = agent.handle_query(query, customer_id)

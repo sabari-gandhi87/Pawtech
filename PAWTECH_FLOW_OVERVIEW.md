@@ -55,7 +55,7 @@ from the code is marked **(unsure)**.
   - It redraws earlier messages from this session.
   - It shows the new question as a "user" bubble.
   - It shows a "Thinking…" spinner.
-- **New visitor, first message:** if the visitor has no demo profile yet, the backend first creates one (see stage 4). The spinner reads "Setting up your demo customer account…". This happens at most once per session.
+- **New visitor, first message:** if the visitor has no demo profile yet, the backend first creates one (see stage 4). The spinner reads "Looking up your details…", so the visitor doesn't see that a profile is being created. This happens at most once per session.
 - The message isn't cleaned, filtered or classified on the way in. It is passed to the support pipeline exactly as typed, along with the visitor ID.
 
 ## 4. Memory
