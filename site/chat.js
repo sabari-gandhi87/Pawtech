@@ -7,6 +7,25 @@ const LOCAL_SUPPORT_URL = "http://localhost:8501/?embed=true";
 const isLocal = ["localhost", "127.0.0.1"].includes(location.hostname);
 const chatUrl = isLocal ? LOCAL_SUPPORT_URL : SUPPORT_URL;
 
+// Anonymous visitor ID: random, created on first visit and kept in this browser, so the agent can
+// remember the visitor between visits without asking them for an ID. It is sent to the agent as "cid".
+function visitorId() {
+  const KEY = "pawtech_visitor_id";
+  let id = null;
+  try { id = localStorage.getItem(KEY); } catch (e) { /* storage blocked: use a one-off ID */ }
+  if (!id) {
+    id = crypto.randomUUID();
+    try { localStorage.setItem(KEY, id); } catch (e) { /* ignore */ }
+  }
+  return id;
+}
+
+function chatUrlWithVisitor() {
+  const url = new URL(chatUrl);
+  url.searchParams.set("cid", visitorId());
+  return url.toString();
+}
+
 const fab = document.getElementById("chat-fab");
 const panel = document.getElementById("chat-panel");
 let loaded = false;
@@ -17,7 +36,7 @@ function loadChat() {
     panel.innerHTML = '<p class="chat-note">Chat isn\'t set up yet. Set <code>SUPPORT_URL</code> in <code>site/chat.js</code>.</p>';
     return;
   }
-  panel.querySelector("iframe").src = chatUrl;
+  panel.querySelector("iframe").src = chatUrlWithVisitor();
 }
 
 fab.addEventListener("click", () => {

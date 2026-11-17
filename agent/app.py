@@ -1,6 +1,8 @@
+import hmac
 import json
 import os
 import re
+import uuid
 from datetime import datetime, timedelta
 
 # Turn off mem0's anonymous usage tracking (PostHog). mem0 reads this environment variable once,
@@ -187,40 +189,61 @@ Valid JSON only."""
 memory, llm = get_clients()
 agent = SupportAgent(memory, llm)
 
-# ---- Sidebar ----
-customer_id = st.sidebar.text_input("Customer ID", placeholder="e.g. aoife-123").strip()
-if customer_id.lower() == KB_USER:  # reserved: would read/write the shared product knowledge base
-    st.sidebar.error("That ID is reserved. Please choose another.")
-    customer_id = ""
-elif any(c.isspace() for c in customer_id):  # mem0 rejects IDs containing spaces
-    st.sidebar.error("Customer IDs can't contain spaces. Try e.g. aoife-123.")
-    customer_id = ""
+# ---- Who is chatting ----
+# The website passes a random, anonymous visitor ID as ?cid=<uuid> (see site/chat.js). Anything that isn't a
+# UUID is ignored (it can't be the reserved KB ID or contain spaces), and the session gets a fresh ID instead.
+_UUID_RE = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
+if "visitor_id" not in st.session_state:
+    cid = (st.query_params.get("cid") or "").strip().lower()
+    st.session_state.visitor_id = cid if _UUID_RE.match(cid) else str(uuid.uuid4())
+customer_id = st.session_state.visitor_id
+
+# ---- Admin (hidden): only with ?admin=1 AND the ADMIN_PASSWORD secret ----
+# Visitors never see the sidebar: Streamlit doesn't draw it when nothing is written to it.
+if st.query_params.get("admin") == "1" and not st.session_state.get("is_admin"):
+    admin_password = st.secrets.get("ADMIN_PASSWORD", "")
+    if not admin_password:
+        st.sidebar.info("Admin is disabled: set ADMIN_PASSWORD in the app's secrets.")
+    else:
+        entered = st.sidebar.text_input("Admin password", type="password")
+        if entered and hmac.compare_digest(entered.encode(), admin_password.encode()):
+            st.session_state.is_admin = True
+            st.rerun()
+        elif entered:
+            st.sidebar.error("Wrong password.")
+is_admin = st.session_state.get("is_admin", False)
+
+if is_admin:
+    st.sidebar.caption(f"Your visitor ID: `{customer_id}`")
+    override = st.sidebar.text_input("Customer ID (blank = your visitor ID)", placeholder="e.g. aoife-123").strip()
+    if override.lower() == KB_USER:  # reserved: would read/write the shared product knowledge base
+        st.sidebar.error("That ID is reserved. Please choose another.")
+    elif any(c.isspace() for c in override):  # mem0 rejects IDs containing spaces
+        st.sidebar.error("Customer IDs can't contain spaces. Try e.g. aoife-123.")
+    elif override:
+        customer_id = override
+
 if customer_id != st.session_state.get("previous_customer_id"):
     st.session_state.messages = []
     st.session_state.customer_data = None
     st.session_state.previous_customer_id = customer_id
 st.session_state.setdefault("messages", [])
 
-if st.sidebar.button("Generate demo customer data"):
-    if customer_id:
+if is_admin:
+    if st.sidebar.button("Generate demo customer data"):
         with st.spinner("Generating..."):
             st.session_state.customer_data = agent.generate_synthetic_data(customer_id)
-    else:
-        st.sidebar.error("Enter a customer ID first.")
-if st.session_state.get("customer_data"):
-    st.sidebar.json(st.session_state.customer_data)
+    if st.session_state.get("customer_data"):
+        st.sidebar.json(st.session_state.customer_data)
 
-if st.sidebar.button("View memory"):
-    if customer_id:
+    if st.sidebar.button("View memory"):
         for t in _texts(agent.get_memories(customer_id)) or ["No memory yet."]:
             st.sidebar.write(f"- {t}")
-    else:
-        st.sidebar.error("Enter a customer ID first.")
 
-with st.sidebar.expander("Admin"):
-    if st.button("Seed product knowledge (run once)"):
-        added = seed_kb(memory)
-        st.success(f"Added {added} new entries ({len(KB) - added} already present).")
+    with st.sidebar.expander("Admin"):
+        if st.button("Seed product knowledge (run once)"):
+            added = seed_kb(memory)
+            st.success(f"Added {added} new entries ({len(KB) - added} already present).")
 
 # ---- Chat ----
 for m in st.session_state.messages:
@@ -228,9 +251,7 @@ for m in st.session_state.messages:
         st.markdown(m["content"])
 
 query = st.chat_input("How can I help with your PawTech gear?")
-if query and not customer_id:
-    st.error("Please enter a customer ID in the sidebar first.")
-elif query:
+if query:
     st.chat_message("user").markdown(query)
     with st.spinner("Thinking..."):
         answer = agent.handle_query(query, customer_id)

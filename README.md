@@ -8,8 +8,10 @@
 ## 2. Deploy the agent (Streamlit Community Cloud)
 - New app -> repo, main file `agent/app.py`, requirements `agent/requirements.txt`
 - Settings -> Secrets: paste `agent/secrets.toml.example` with real values
-- Open the app, sidebar -> Admin -> "Seed product knowledge" ONCE
-- Smoke test: customer ID `test1` -> "Generate demo customer data" -> ask about returns, then about "my order"
+- Admin tools are hidden from visitors. Open the app with `?admin=1` (e.g. `https://<app>.streamlit.app/?admin=1`),
+  enter `ADMIN_PASSWORD` in the sidebar, then Admin -> "Seed product knowledge" ONCE
+- Smoke test (admin): customer ID `test1` -> "Generate demo customer data" -> ask about returns, then about "my order"
+- Visitors get an anonymous ID automatically: `site/chat.js` stores a random ID in the browser and passes it as `?cid=`
 
 ## 3. Deploy the site (Cloudflare Pages)
 - Edit `SUPPORT_URL` in `site/chat.js` to your Streamlit URL (keep `?embed=true`).
